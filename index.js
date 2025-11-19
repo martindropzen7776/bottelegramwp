@@ -14,14 +14,14 @@ if (!TOKEN) throw new Error("Falta la variable BOT_TOKEN");
 const META_PIXEL_ID = process.env.META_PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
 
-// 👑 Tu ID de Telegram (ADMIN para /broadcast)
+// 👑 Tu ID de Telegram (para /broadcast)
 const ADMIN_ID = 7759212225;
 
 /* ============================
    📁 DISK /data EN RENDER
 =============================== */
 
-// Render monta el disk en /data (no lo creamos nosotros)
+// Render monta el disk en /data
 const DATA_DIR = "/data";
 
 const USERS_FILE = path.join(DATA_DIR, "usuarios.json");
@@ -86,6 +86,8 @@ function guardarSessions() {
 
 /* ============================
    📡 ENVIAR LEAD A META (CAPI)
+   → Siempre manda evento Lead.
+   → Si hay fbp/fbc los usa, si no, manda con IP/UA/external_id mínimo.
 =============================== */
 
 async function enviarLeadMeta({ chatId, fbp, fbc }) {
@@ -94,19 +96,16 @@ async function enviarLeadMeta({ chatId, fbp, fbc }) {
     return;
   }
 
-  // Si no tenemos fbp ni fbc, el evento NO se envía
-  if (!fbp && !fbc) {
-    console.log(
-      `⛔ No se envía Lead para chat ${chatId}: no hay fbp/fbc (usuario no viene con sesión válida).`
-    );
-    return;
-  }
-
   const url = `https://graph.facebook.com/v18.0/${META_PIXEL_ID}/events`;
 
+  // Datos mínimos que siempre mandamos
   const user_data = {
-    client_user_agent: "TelegramBot"
+    client_ip_address: "1.1.1.1",      // IP dummy aceptada por Meta
+    client_user_agent: "TelegramBot",  // UA fijo
+    external_id: String(chatId)        // ID interno del usuario
   };
+
+  // Si tenemos datos reales desde la landing, suman para el matching
   if (fbp) user_data.fbp = fbp;
   if (fbc) user_data.fbc = fbc;
 
@@ -137,7 +136,8 @@ async function enviarLeadMeta({ chatId, fbp, fbc }) {
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 /* ----- /start (con o sin sessionId) ----- */
-
+// /start
+// /start asdasd123123 (desde la landing)
 bot.onText(/\/start(?:\s+(.+))?/, (msg, match) => {
   const chatId = msg.chat.id;
   const sessionId = match[1]; // puede venir de la landing
@@ -159,21 +159,22 @@ bot.onText(/\/start(?:\s+(.+))?/, (msg, match) => {
         `🔗 Start con sessionId=${sessionId} → fbp=${fbp || "-"} fbc=${fbc || "-"}`
       );
     } else {
-      console.log(`⚠️ sessionId ${sessionId} no encontrado en sessions.json`);
+      console.log(
+        `⚠️ sessionId ${sessionId} no encontrado, se envía Lead igual sin fbp/fbc`
+      );
     }
   } else {
     console.log("ℹ️ /start sin sessionId (usuario entró directo al bot).");
   }
 
-  // Enviamos Lead SOLO si tenemos datos de sesión válidos
+  // SIEMPRE enviamos Lead a Meta, tenga o no fbp/fbc
   enviarLeadMeta({ chatId, fbp, fbc });
 
   bot.sendMessage(
     chatId,
     `👋 ¡Bienvenido/a!
 
-Ya quedaste registrado en nuestro bot oficial. 
-Cuando llegás desde la landing, este inicio se registra como un LEAD en nuestro sistema.`
+Ya quedaste registrado en nuestro bot oficial. Desde ahora, cada vez que alguien entra desde la landing y toca START, lo contamos como LEAD.`
   );
 });
 
@@ -211,28 +212,26 @@ const app = express();
 // Para leer JSON del body
 app.use(express.json());
 
-// Endpoint donde la landing guarda sesión + fbp/fbc
+// Endpoint donde la landing guarda sessionId + fbp/fbc
 // POST /api/telegram-session
 // body: { sessionId, fbp, fbc }
 app.post("/api/telegram-session", (req, res) => {
   const { sessionId, fbp, fbc } = req.body || {};
 
-  if (!sessionId || (!fbp && !fbc)) {
-    console.log("❌ /api/telegram-session datos inválidos:", req.body);
-    return res
-      .status(400)
-      .json({ ok: false, error: "Falta sessionId o fbp/fbc" });
+  if (!sessionId) {
+    console.log("❌ /api/telegram-session sin sessionId:", req.body);
+    return res.status(400).json({ ok: false, error: "Falta sessionId" });
   }
 
   const idx = sessions.findIndex((s) => s.sessionId === sessionId);
   if (idx === -1) {
-    sessions.push({ sessionId, fbp, fbc });
+    sessions.push({ sessionId, fbp: fbp || null, fbc: fbc || null });
   } else {
-    sessions[idx] = { sessionId, fbp, fbc };
+    sessions[idx] = { sessionId, fbp: fbp || null, fbc: fbc || null };
   }
 
   guardarSessions();
-  console.log("✅ Sesión guardada:", sessionId, "fbp:", fbp, "fbc:", fbc);
+  console.log("✅ Sesión guardada:", sessionId, "fbp:", fbp || "-", "fbc:", fbc || "-");
   res.json({ ok: true });
 });
 
