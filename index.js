@@ -168,13 +168,13 @@ bot.onText(/\/start/, (msg) => {
 
   bot.sendMessage(
     chatId,
-    `👋 ¡Bienvenido/a!
+    `¡Bienvenido/a! 👋🔥
 
-Para activar tus bonos y registrarte como LEAD oficial, necesito tu correo.
+Estás a un paso de activar tu BONO EXCLUSIVO DEL 100%, válido solo para nuevos jugadores.
+Con este bono duplicamos tu primer depósito automáticamente.
 
-✉️ *Escribí tu email en un mensaje* (por ejemplo: tunombre@gmail.com).
-
-Apenas lo mandes, te confirmo y se activa el registro.`,
+Para generar tu cuenta necesito un dato:
+👉 Decime tu email y te creo el usuario en 30 segundos`,
     { parse_mode: "Markdown" }
   );
 });
