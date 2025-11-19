@@ -3,6 +3,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
+const crypto = require("crypto");
 
 /* ============================
    🔐 VARIABLES DEL BOT / META
@@ -21,14 +22,13 @@ const ADMIN_ID = 7759212225;
    📁 DISK /data EN RENDER
 =============================== */
 
-// Render monta el disk en /data
-const DATA_DIR = "/data";
+const DATA_DIR = "/data"; // Render monta el disk aquí
 
 const USERS_FILE = path.join(DATA_DIR, "usuarios.json");
-const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+const EMAILS_FILE = path.join(DATA_DIR, "emails.json");
 
 console.log("📂 Archivo usuarios:", USERS_FILE);
-console.log("📂 Archivo sesiones:", SESSIONS_FILE);
+console.log("📂 Archivo emails:", EMAILS_FILE);
 
 /* ============================
    📌 CARGAR USUARIOS
@@ -58,61 +58,82 @@ function guardarUsuarios() {
 }
 
 /* ============================
-   📌 CARGAR SESIONES (fbp/fbc)
+   📌 CARGAR EMAILS
+   Estructura: [{ chatId, email }]
 =============================== */
 
-let sessions = [];
+let emails = [];
 
-if (fs.existsSync(SESSIONS_FILE)) {
+if (fs.existsSync(EMAILS_FILE)) {
   try {
-    sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"));
-    console.log("✅ Sesiones cargadas al iniciar:", sessions.length);
+    emails = JSON.parse(fs.readFileSync(EMAILS_FILE, "utf8"));
+    console.log("✅ Emails cargados al iniciar:", emails.length);
   } catch (e) {
-    console.error("❌ Error leyendo sessions.json:", e);
-    sessions = [];
+    console.error("❌ Error leyendo emails.json:", e);
+    emails = [];
   }
 } else {
-  console.log("ℹ️ sessions.json no existe, se creará al guardar la primera sesión.");
+  console.log("ℹ️ emails.json no existe, se creará al guardar el primero.");
 }
 
-function guardarSessions() {
+function guardarEmails() {
   try {
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
-    console.log("💾 Sesiones guardadas:", sessions.length);
+    fs.writeFileSync(EMAILS_FILE, JSON.stringify(emails, null, 2));
+    console.log("📩 Emails guardados:", emails.length);
   } catch (e) {
-    console.error("❌ Error guardando sesiones:", e);
+    console.error("❌ Error guardando emails:", e);
   }
+}
+
+function setEmail(chatId, email) {
+  const idx = emails.findIndex((e) => e.chatId === chatId);
+  if (idx === -1) {
+    emails.push({ chatId, email });
+  } else {
+    emails[idx].email = email;
+  }
+  guardarEmails();
 }
 
 /* ============================
-   📡 ENVIAR LEAD A META (CAPI)
-   → Siempre manda evento Lead.
-   → Si hay fbp/fbc los usa, si no, manda con IP/UA/external_id mínimo.
+   🔒 HASH SHA256 PARA META
 =============================== */
 
-async function enviarLeadMeta({ chatId, fbp, fbc }) {
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+/* ============================
+   📡 ENVIAR EVENTO LEAD A META
+   → Solo se envía si hay email.
+=============================== */
+
+async function enviarLeadMeta({ chatId, email }) {
   if (!META_PIXEL_ID || !META_ACCESS_TOKEN) {
     console.log("⚠️ Pixel o Token de Meta no configurados, no se envía evento.");
     return;
   }
 
+  if (!email) {
+    console.log("⛔ No se envía Lead: falta email.");
+    return;
+  }
+
   const url = `https://graph.facebook.com/v18.0/${META_PIXEL_ID}/events`;
 
-  // Datos mínimos que siempre mandamos
-  const user_data = {
-    client_ip_address: "1.1.1.1",      // IP dummy aceptada por Meta
-    client_user_agent: "TelegramBot",  // UA fijo
-    external_id: String(chatId)        // ID interno del usuario
-  };
+  const normalizedEmail = email.trim().toLowerCase();
+  const emailHash = sha256(normalizedEmail);
 
-  // Si tenemos datos reales desde la landing, suman para el matching
-  if (fbp) user_data.fbp = fbp;
-  if (fbc) user_data.fbc = fbc;
+  const user_data = {
+    em: [emailHash],
+    external_id: String(chatId),
+    client_user_agent: "TelegramBot"
+  };
 
   const payload = {
     data: [
       {
-        event_name: "Lead",
+        event_name: "Lead", // o "CompleteRegistration", como prefieras
         event_time: Math.floor(Date.now() / 1000),
         action_source: "system_generated",
         user_data
@@ -135,46 +156,26 @@ async function enviarLeadMeta({ chatId, fbp, fbc }) {
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-/* ----- /start (con o sin sessionId) ----- */
-// /start
-// /start asdasd123123 (desde la landing)
-bot.onText(/\/start(?:\s+(.+))?/, (msg, match) => {
+/* ----- /start → registra usuario y pide email ----- */
+
+bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  const sessionId = match[1]; // puede venir de la landing
 
   if (!usuarios.includes(chatId)) {
     usuarios.push(chatId);
     guardarUsuarios();
   }
 
-  let fbp = null;
-  let fbc = null;
-
-  if (sessionId) {
-    const sess = sessions.find((s) => s.sessionId === sessionId);
-    if (sess) {
-      fbp = sess.fbp || null;
-      fbc = sess.fbc || null;
-      console.log(
-        `🔗 Start con sessionId=${sessionId} → fbp=${fbp || "-"} fbc=${fbc || "-"}`
-      );
-    } else {
-      console.log(
-        `⚠️ sessionId ${sessionId} no encontrado, se envía Lead igual sin fbp/fbc`
-      );
-    }
-  } else {
-    console.log("ℹ️ /start sin sessionId (usuario entró directo al bot).");
-  }
-
-  // SIEMPRE enviamos Lead a Meta, tenga o no fbp/fbc
-  enviarLeadMeta({ chatId, fbp, fbc });
-
   bot.sendMessage(
     chatId,
     `👋 ¡Bienvenido/a!
 
-Ya quedaste registrado en nuestro bot oficial. Desde ahora, cada vez que alguien entra desde la landing y toca START, lo contamos como LEAD.`
+Para activar tus bonos y registrarte como LEAD oficial, necesito tu correo.
+
+✉️ *Escribí tu email en un mensaje* (por ejemplo: tunombre@gmail.com).
+
+Apenas lo mandes, te confirmo y se activa el registro.`,
+    { parse_mode: "Markdown" }
   );
 });
 
@@ -204,40 +205,46 @@ bot.onText(/\/broadcast (.+)/, (msg, match) => {
 });
 
 /* ============================
-   🌐 EXPRESS PARA LANDING + HEALTHCHECK
+   📧 CAPTURAR EMAIL Y ENVIAR LEAD
+=============================== */
+
+bot.on("message", (msg) => {
+  const chatId = msg.chat.id;
+  const text = (msg.text || "").trim();
+
+  // ignorar comandos tipo /start, /broadcast, etc.
+  if (!text || text.startsWith("/")) return;
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(text)) {
+    // si querés, podés no responder nada o decir "mandá un mail válido"
+    return;
+  }
+
+  const email = text.toLowerCase();
+
+  // Guardar email en /data/emails.json
+  setEmail(chatId, email);
+
+  // Enviar evento Lead a Meta con el email hasheado
+  enviarLeadMeta({ chatId, email });
+
+  bot.sendMessage(
+    chatId,
+    `✅ Perfecto, registré tu correo: *${email}*\n\nYa quedaste registrado como LEAD en nuestro sistema.`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+/* ============================
+   🌐 EXPRESS PARA RENDER
 =============================== */
 
 const app = express();
 
-// Para leer JSON del body
-app.use(express.json());
-
-// Endpoint donde la landing guarda sessionId + fbp/fbc
-// POST /api/telegram-session
-// body: { sessionId, fbp, fbc }
-app.post("/api/telegram-session", (req, res) => {
-  const { sessionId, fbp, fbc } = req.body || {};
-
-  if (!sessionId) {
-    console.log("❌ /api/telegram-session sin sessionId:", req.body);
-    return res.status(400).json({ ok: false, error: "Falta sessionId" });
-  }
-
-  const idx = sessions.findIndex((s) => s.sessionId === sessionId);
-  if (idx === -1) {
-    sessions.push({ sessionId, fbp: fbp || null, fbc: fbc || null });
-  } else {
-    sessions[idx] = { sessionId, fbp: fbp || null, fbc: fbc || null };
-  }
-
-  guardarSessions();
-  console.log("✅ Sesión guardada:", sessionId, "fbp:", fbp || "-", "fbc:", fbc || "-");
-  res.json({ ok: true });
-});
-
-// Healthcheck
 app.get("/", (req, res) => {
-  res.send("Bot Telegram + Meta CAPI funcionando ✅");
+  res.send("Bot Telegram + Leads por email funcionando ✅");
 });
 
 const PORT = process.env.PORT || 10000;
