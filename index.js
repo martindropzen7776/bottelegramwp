@@ -114,7 +114,7 @@ Estás a un paso de activar tu BONO EXCLUSIVO DEL 100%, válido solo para nuevos
 Con este bono duplicamos tu primer depósito automáticamente.
 
 Para generar tu cuenta necesito un dato:
-👉 Decime tu email y te creo el usuario en 30 segundos`,
+👉 Decime tu NOMBRE`,
     { parse_mode: "Markdown" }
   );
 });
