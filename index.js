@@ -119,29 +119,77 @@ Para generar tu cuenta necesito un dato:
   );
 });
 
-/* ----- /broadcast <mensaje> (solo admin) ----- */
+/* ----- /broadcast (texto o imagen) (solo admins) ----- */
 
-bot.onText(/\/broadcast (.+)/, (msg, match) => {
-  if (msg.from.id !== ADMIN_ID) {
-    return bot.sendMessage(msg.chat.id, "❌ No tenés permiso para usar este comando.");
+bot.onText(/\/broadcast(?: (.*))?/, (msg, match) => {
+  if (!ADMINS.includes(msg.from.id)) {
+    return bot.sendMessage(
+      msg.chat.id,
+      "❌ No tenés permiso para usar este comando."
+    );
   }
 
-  const mensaje = match[1];
+  const texto = (match && match[1]) ? match[1] : ""; // texto después de /broadcast
+  const reply = msg.reply_to_message;
 
   if (usuarios.length === 0) {
     bot.sendMessage(msg.chat.id, "⚠️ No hay usuarios registrados todavía.");
     return;
   }
 
-  console.log("📢 Enviando broadcast a", usuarios.length, "usuarios");
+  // 🖼️ CASO 1: estás respondiendo a una foto → broadcast de imagen
+  if (reply && reply.photo && reply.photo.length > 0) {
+    const photoSizes = reply.photo;
+    const bestPhoto = photoSizes[photoSizes.length - 1]; // mejor calidad
+    const fileId = bestPhoto.file_id;
+
+    console.log(
+      "📢 Enviando broadcast de FOTO a",
+      usuarios.length,
+      "usuarios. Caption:",
+      texto
+    );
+
+    usuarios.forEach((id) => {
+      bot
+        .sendPhoto(id, fileId, {
+          caption: texto || undefined
+        })
+        .catch((e) =>
+          console.log("Error enviando foto a", id, "→", e.message || e)
+        );
+    });
+
+    return bot.sendMessage(
+      msg.chat.id,
+      "✅ Broadcast de IMAGEN enviado a todos los usuarios."
+    );
+  }
+
+  // 💬 CASO 2: sin foto → broadcast de texto normal
+  if (!texto) {
+    return bot.sendMessage(
+      msg.chat.id,
+      "Usá:\n/broadcast Texto del mensaje\n\nO respondé a una foto con /broadcast Texto opcional"
+    );
+  }
+
+  console.log(
+    "📢 Enviando broadcast de TEXTO a",
+    usuarios.length,
+    "usuarios. Mensaje:",
+    texto
+  );
 
   usuarios.forEach((id) => {
     bot
-      .sendMessage(id, mensaje)
-      .catch((e) => console.log("Error enviando a", id, "→", e.message || e));
+      .sendMessage(id, texto)
+      .catch((e) =>
+        console.log("Error enviando texto a", id, "→", e.message || e)
+      );
   });
 
-  bot.sendMessage(msg.chat.id, "✅ Broadcast enviado a todos los usuarios.");
+  bot.sendMessage(msg.chat.id, "✅ Broadcast de TEXTO enviado a todos los usuarios.");
 });
 
 /* ============================
