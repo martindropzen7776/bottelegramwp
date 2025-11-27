@@ -10,20 +10,21 @@ const path = require("path");
 const TOKEN = process.env.BOT_TOKEN;
 if (!TOKEN) throw new Error("Falta la variable BOT_TOKEN");
 
-// 👑 Tu ID de Telegram (para /broadcast)
-const ADMIN_ID = 7759212225;
+// 👑 IDs de Telegram que pueden usar /broadcast y /stats
+const ADMINS = [
+  7759212225, // yo
+  7656259776, // gerard 
+  7928936124, // tuli
+];
 
 /* ============================
    📁 DISK /data EN RENDER
 =============================== */
 
 const DATA_DIR = "/data"; // Render monta el disk aquí
-
 const USERS_FILE = path.join(DATA_DIR, "usuarios.json");
-const EMAILS_FILE = path.join(DATA_DIR, "emails.json");
 
 console.log("📂 Archivo usuarios:", USERS_FILE);
-console.log("📂 Archivo emails:", EMAILS_FILE);
 
 /* ============================
    📌 CARGAR USUARIOS
@@ -53,69 +54,55 @@ function guardarUsuarios() {
 }
 
 /* ============================
-   📌 CARGAR EMAILS
-   Estructura: [{ chatId, email }]
-=============================== */
-
-let emails = [];
-
-if (fs.existsSync(EMAILS_FILE)) {
-  try {
-    emails = JSON.parse(fs.readFileSync(EMAILS_FILE, "utf8"));
-    console.log("✅ Emails cargados al iniciar:", emails.length);
-  } catch (e) {
-    console.error("❌ Error leyendo emails.json:", e);
-    emails = [];
-  }
-} else {
-  console.log("ℹ️ emails.json no existe, se creará al guardar el primero.");
-}
-
-function guardarEmails() {
-  try {
-    fs.writeFileSync(EMAILS_FILE, JSON.stringify(emails, null, 2));
-    console.log("📩 Emails guardados:", emails.length);
-  } catch (e) {
-    console.error("❌ Error guardando emails:", e);
-  }
-}
-
-function setEmail(chatId, email) {
-  const idx = emails.findIndex((e) => e.chatId === chatId);
-  if (idx === -1) {
-    emails.push({ chatId, email });
-  } else {
-    emails[idx].email = email;
-  }
-  guardarEmails();
-}
-
-/* ============================
    🤖 BOT TELEGRAM
 =============================== */
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-/* ----- /start → registra usuario y pide email ----- */
+bot.on("polling_error", (err) => {
+  console.error("❤️‍🔥 polling_error:", err);
+});
+
+/* ----- /start → registra usuario y loguea datos ----- */
 
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
+  const username = msg.from.username || "";
+  const firstName = msg.from.first_name || "";
+  const lastName = msg.from.last_name || "";
 
   if (!usuarios.includes(chatId)) {
     usuarios.push(chatId);
     guardarUsuarios();
+    console.log(
+      `🆕 Nuevo usuario: id=${chatId} username=@${username} nombre=${firstName} ${lastName}`
+    );
+  } else {
+    console.log(
+      `🔁 Usuario repetido: id=${chatId} username=@${username} nombre=${firstName} ${lastName}`
+    );
   }
 
   bot.sendMessage(
     chatId,
-    `¡Bienvenido/a! 👋🔥
+    `Tu <b>BONO DE BIENVENIDA</b> es:
+<b>WELCOME</b>
 
-Estás a un paso de activar tu BONO EXCLUSIVO DEL 100%, válido solo para nuevos jugadores.
-Con este bono duplicamos tu primer depósito automáticamente.
+🔄 <b>Para activarlo:</b>
+1️⃣ Entra en el icono de la personita arriba a la derecha
+2️⃣ En la parte de código promocional ingresa el código
+3️⃣ Escribí: <b>WELCOME</b>
 
-Para generar tu cuenta necesito un dato:
-👉 Decime tu NOMBRE`,
-    { parse_mode: "Markdown" }
+🎁 <b>BONO EXTRA SORPRESA:</b>
+Solo por abrir este chat, te damos un BONO EXTRA de regalo, exclusivo para vos.
+
+Para recibirlo ahora, escribí a nuestro agente oficial 👇
+👉 <a href="https://t.me/m/GhGxuC_AYTQx">Haz click aquí para jugar</a> 👈
+
+🥇 <b>Tip:</b> Guardá este chat.
+Acá te mandamos regalos sorpresa, bonos privados y beneficios especiales que no publicamos en ningún otro lado.
+`,
+    { parse_mode: "HTML", disable_web_page_preview: true }
   );
 });
 
@@ -192,35 +179,21 @@ bot.onText(/\/broadcast(?: (.*))?/, (msg, match) => {
   bot.sendMessage(msg.chat.id, "✅ Broadcast de TEXTO enviado a todos los usuarios.");
 });
 
-/* ============================
-   📧 CAPTURAR EMAIL
-   (solo guarda en /data/emails.json)
-=============================== */
+/* ----- /stats → ver cantidad de usuarios (solo admins) ----- */
 
-bot.on("message", (msg) => {
-  const chatId = msg.chat.id;
-  const text = (msg.text || "").trim();
-
-  // ignorar comandos tipo /start, /broadcast, etc.
-  if (!text || text.startsWith("/")) return;
-
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  if (!emailRegex.test(text)) {
-    // Si querés, podés responder algo acá
-    // bot.sendMessage(chatId, "Por favor enviá un email válido 😊");
-    return;
+bot.onText(/\/stats/, (msg) => {
+  if (!ADMINS.includes(msg.from.id)) {
+    return bot.sendMessage(
+      msg.chat.id,
+      "❌ No tenés permiso para usar este comando."
+    );
   }
 
-  const email = text.toLowerCase();
-
-  // Guardar email en /data/emails.json
-  setEmail(chatId, email);
-
+  console.log("📊 Stats pedidas. Total usuarios:", usuarios.length);
   bot.sendMessage(
-    chatId,
-    `✅ Perfecto, registré tu correo: *${email}*\n\nYa quedaste registrado en nuestro sistema.`,
-    { parse_mode: "Markdown" }
+    msg.chat.id,
+    `📊 Usuarios registrados que tocaron /start: <b>${usuarios.length}</b>`,
+    { parse_mode: "HTML" }
   );
 });
 
@@ -231,12 +204,30 @@ bot.on("message", (msg) => {
 const app = express();
 
 app.get("/", (req, res) => {
-  res.send("Bot Telegram funcionando ✅ (sin integración Meta Pixel)");
+  res.send("Bot Telegram funcionando ✅ (solo usuarios, sin emails)");
 });
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log("🌍 Server listo en puerto", PORT);
+});
+
+/* ============================
+   📥 DESCARGAR USUARIOS (solo admins)
+=============================== */
+
+app.get("/download-users", (req, res) => {
+  const adminToken = req.query.token; // para seguridad básica
+  
+  if (adminToken !== "falafel") {
+    return res.status(403).send("No autorizado");
+  }
+
+  if (!fs.existsSync(USERS_FILE)) {
+    return res.status(404).send("El archivo usuarios.json no existe aún");
+  }
+
+  res.download(USERS_FILE, "usuarios.json");
 });
 
 module.exports = {};
